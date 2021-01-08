@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-
 import os
 import sys
 import time
@@ -13,30 +12,29 @@ import pytesseract
 from PIL import Image
 
 my_linux_config = {
-    "y_offset": 0,
     "scale": 1,
     "window_max_size": 768,
     "window_height": 768,
     "screenshot_region": (0, 0, 353, 768),
     "circle_center": (176, 640),
     "circle_radius": 110,
-    "detected_min_height": 20,
-    "detected_min_width": 2,
+    "contour_min_height": 20,
+    "contour_min_width": 2,
     "rearranged_box_size": 64,
     "rearranged_padding": 8,
 }
 
-# mac with retina display
+# mac with retina display, scrcpy flag "--borderless" does not work
+# y offset 90 to account for macos top bar + scrcpy window title bar
 my_macos_config = {
-    "y_offset": 90,
     "scale": 2,
     "window_max_size": 768,
     "window_height": 768,
-    "screenshot_region": (0, 90, 353 * 2, 768 * 2 + 90),
-    "circle_center": (176 * 2, 640 * 2),
+    "screenshot_region": (0, 0, 353 * 2, 768 * 2 + 90),
+    "circle_center": (176 * 2, 640 * 2 + 90),
     "circle_radius": 110 * 2,
-    "detected_min_height": 20 * 2,
-    "detected_min_width": 2 * 2,
+    "contour_min_height": 20 * 2,
+    "contour_min_width": 2 * 2,
     "rearranged_box_size": 64 * 2,
     "rearranged_padding": 8 * 2,
 }
@@ -45,8 +43,6 @@ config = my_macos_config
 
 
 def detect_letters(img: Image) -> [tuple]:
-    global config
-
     img = cv.cvtColor(np.array(img), cv.COLOR_RGB2GRAY)
     img = cv.threshold(img, 127, 255, cv.THRESH_BINARY)[1]
     mask = np.zeros(img.shape, np.uint8)
@@ -62,12 +58,13 @@ def detect_letters(img: Image) -> [tuple]:
 
     for cnt in contours:
         cx, cy, w, h = cv.boundingRect(cnt)
-        if h < config["detected_min_height"] or w < config["detected_min_width"]:
+        if h < config["contour_min_height"] or w < config["contour_min_width"]:
             continue
+
+        positions.append((cx + (w // 2), cy + (h // 4)))
 
         # re-arrange letters in a circle into a straight line
         rearranged[pos_y:pos_y + h, pos_x:pos_x + w] = img[cy:cy + h, cx:cx + w]
-        positions.append((cx + (w // 2), cy + (h // 4)))
         if pos_y + h > max_y:
             max_y = pos_y + h
         pos_x = pos_x + w + padding
@@ -81,7 +78,6 @@ def detect_letters(img: Image) -> [tuple]:
 
 
 def scrcpy():
-    global config
     cmd = f"""  if pgrep -x scrcpy >/dev/null ;
                 then
                     echo 'scrcpy already running'
@@ -129,10 +125,8 @@ if __name__ == "__main__":
     scrcpy()
     all_words = load_words()
     while True:
-        y_offset = config["y_offset"]
         x, y = config["circle_center"]
         scale = config["scale"]
-        y += y_offset
         x, y = x // scale, y // scale
         pyautogui.click(x, y)
         time.sleep(2)
@@ -147,13 +141,12 @@ if __name__ == "__main__":
             print(matched_word)
             moves = build_moves(matched_word, detected)
             for index, (x, y) in enumerate(moves):
-                y += y_offset
                 x, y = x // scale, y // scale
                 print("\t", "move", index, (x, y))
                 if index == 0:
-                    pyautogui.mouseDown(x, y, "left")
+                    pyautogui.mouseDown(x, y, pyautogui.LEFT)
                 elif index == len(moves) - 1:
-                    pyautogui.mouseUp(x, y, "left")
+                    pyautogui.mouseUp(x, y, pyautogui.LEFT)
                 else:
                     pyautogui.moveTo(x, y, 0.15)
             time.sleep(0.5)
