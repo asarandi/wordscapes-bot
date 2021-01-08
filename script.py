@@ -1,22 +1,104 @@
 #!/usr/bin/env python3
 
 
-import pyautogui
-import numpy as np
-import cv2 as cv
 import os
+import sys
+import time
 from collections import Counter
-from PIL import Image, ImageDraw, ImageFont
 
-config = {
+import cv2 as cv
+import numpy as np
+import pyautogui
+import pytesseract
+from PIL import Image
+
+my_linux_config = {
+    "y_offset": 0,
+    "scale": 1,
     "window_max_size": 768,
-    "window_max_height": 768,
+    "window_height": 768,
     "screenshot_region": (0, 0, 353, 768),
-    "circle_center": (176, 590),
+    "circle_center": (176, 640),
     "circle_radius": 110,
-    "detected_min_height": 38,
-    "detected_min_width": 6,
+    "detected_min_height": 20,
+    "detected_min_width": 2,
+    "rearranged_box_size": 64,
+    "rearranged_padding": 8,
 }
+
+# mac with retina display
+my_macos_config = {
+    "y_offset": 90,
+    "scale": 2,
+    "window_max_size": 768,
+    "window_height": 768,
+    "screenshot_region": (0, 90, 353 * 2, 768 * 2 + 90),
+    "circle_center": (176 * 2, 640 * 2),
+    "circle_radius": 110 * 2,
+    "detected_min_height": 20 * 2,
+    "detected_min_width": 2 * 2,
+    "rearranged_box_size": 64 * 2,
+    "rearranged_padding": 8 * 2,
+}
+
+config = my_macos_config
+
+
+def detect_letters(img: Image) -> [tuple]:
+    global config
+
+    img = cv.cvtColor(np.array(img), cv.COLOR_RGB2GRAY)
+    img = cv.threshold(img, 127, 255, cv.THRESH_BINARY)[1]
+    mask = np.zeros(img.shape, np.uint8)
+    cv.circle(mask, config["circle_center"], config["circle_radius"], 1, -1)
+    img = cv.bitwise_and(img, img, mask=mask)
+    img = cv.bitwise_not(img, img, mask=mask)
+    contours, _ = cv.findContours(img, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+
+    box_size, padding = config["rearranged_box_size"], config["rearranged_padding"]
+    rearranged = np.zeros((box_size, 8 * box_size), np.uint8)  # enough space for eight letters
+    max_y, pos_y, pos_x = 0, padding, padding
+    positions = []
+
+    for cnt in contours:
+        cx, cy, w, h = cv.boundingRect(cnt)
+        if h < config["detected_min_height"] or w < config["detected_min_width"]:
+            continue
+
+        # re-arrange letters in a circle into a straight line
+        rearranged[pos_y:pos_y + h, pos_x:pos_x + w] = img[cy:cy + h, cx:cx + w]
+        positions.append((cx + (w // 2), cy + (h // 4)))
+        if pos_y + h > max_y:
+            max_y = pos_y + h
+        pos_x = pos_x + w + padding
+
+    rearranged = cv.bitwise_not(rearranged, rearranged)[:max_y + padding, :pos_x]
+    tes = pytesseract.image_to_string(rearranged, config='--psm 6')
+    letters = list(filter(lambda c: c.isupper(), list(tes)))
+    if len(letters) != len(positions):
+        sys.exit("error detecting letters")
+    return list(zip(letters, positions))
+
+
+def scrcpy():
+    global config
+    cmd = f"""  if pgrep -x scrcpy >/dev/null ;
+                then
+                    echo 'scrcpy already running'
+                else
+                    adb shell 'monkey -p com.peoplefun.wordcross 1'
+                    nohup scrcpy \
+                    --stay-awake \
+                    --turn-screen-off \
+                    --always-on-top \
+                    --window-borderless \
+                    --window-x 0 \
+                    --window-y 0 \
+                    --max-size {config['window_max_size']} \
+                    --window-height {config['window_height']} \
+                    --lock-video-orientation 0 >/dev/null 2>&1 &
+                fi """
+    os.system(cmd)
 
 
 def load_words() -> set:
@@ -26,85 +108,53 @@ def load_words() -> set:
     return res
 
 
-def match_words(word_list: set, search: str) -> [str]:
-    ctr = Counter(list(search))
+# returns a list of words that can be arranged from scrambled letters
+def match_words(word_list: set, letters: [tuple]) -> [str]:
+    ctr = Counter([k[0].lower() for k in letters])
     return list(filter(lambda w: len(Counter(list(w)) - ctr) == 0, word_list))
 
 
-def make_letter_contours() -> {}:
-    res = {}
-    font = ImageFont.truetype("KeepCalm-Medium.ttf", 128)  # font size
-    for i in range(26):
-        letter = chr(i + ord('A'))
-        image = np.zeros((256, 256, 3), np.uint8)  # image size
-        image = Image.fromarray(image)  # new("1", (72, 72), 0)
-        draw = ImageDraw.Draw(image)
-        draw.text((32, 32), letter, font=font, fill=(255, 255, 255))
-        image = np.array(image.crop(image.getbbox()))
-        image = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
-        ret, thresh = cv.threshold(image, 127, 255, 0)
-        contours, hierarchy = cv.findContours(thresh, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-        res[letter] = contours[0]
-    return res
-
-
-def detect_letters(letter_contours: {}, img: Image) -> {}:
-    global config
-    img = cv.cvtColor(np.array(img), cv.COLOR_RGB2GRAY)
-    img = cv.GaussianBlur(img, (3, 7), 0)
-    img = cv.threshold(img, 127, 255, cv.THRESH_BINARY)[1]
-    mask = np.zeros(img.shape, np.uint8)
-    cv.circle(mask, config["circle_center"], config["circle_radius"], 1, -1)
-    img = cv.bitwise_and(img, img, mask=mask)
-    img = cv.bitwise_not(img, img, mask=mask)
-    #    cv.imshow("img", img)
-    #    cv.waitKey()
-    contours, hierarchy = cv.findContours(img, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+# returns a list of non repeating (x, y) coords
+def build_moves(word: str, positions: [tuple]) -> [tuple]:
     res = []
-    for cnt1 in contours:
-        x, y, w, h = cv.boundingRect(cnt1)
-        if h < config["detected_min_height"] or w < config["detected_min_width"]:
-            continue
-        best_score, best_letter = 1, '_'
-        for letter, cnt2 in letter_contours.items():
-            score = cv.matchShapes(cnt1, cnt2, cv.CONTOURS_MATCH_I1, 0.0)
-            if score < best_score:
-                best_score, best_letter = score, letter
-        res.append((best_letter, best_score, x + (w // 2), y + (h // 2)))
+    for k in list(word.upper()):
+        for letter, (px, py) in positions:
+            if letter == k and (px, py) not in res:
+                res.append((px, py))
+                break
     return res
 
 
-def join_letters(lst: [tuple]) -> str:
-    return "".join([x[0] for x in lst])
-
-
-def scrcpy():
-    global config
-    cmd = f"""
-                killall scrcpy;                                 \
-                nohup scrcpy                                    \
-                    --stay-awake                                \
-                    --turn-screen-off                           \
-                    --always-on-top                             \
-                    --window-borderless                         \
-                    --window-x 0                                \
-                    --window-y 0                                \
-                    --max-size {config['window_max_size']}      \
-                    --window-height {config['window_height']}   \
-                    --lock-video-orientation 0                  \
-                    >/dev/null 2>&1 &
-        """
-    os.system(cmd)
-
-
-# scrcpy()
-all_letters = make_letter_contours()
-all_words = load_words()
-capture = pyautogui.screenshot(region=config["screenshot_region"]).convert("RGB")
-detected = detect_letters(all_letters, capture)
-for char in detected:
-    print(char)
-results = match_words(all_words, join_letters(detected).lower())
-results = sorted(results)
-results.sort(key=lambda x: len(x))
-print(results)
+if __name__ == "__main__":
+    scrcpy()
+    all_words = load_words()
+    while True:
+        y_offset = config["y_offset"]
+        x, y = config["circle_center"]
+        scale = config["scale"]
+        y += y_offset
+        x, y = x // scale, y // scale
+        pyautogui.click(x, y)
+        time.sleep(2)
+        capture = pyautogui.screenshot(region=config["screenshot_region"]).convert("RGB")
+        detected = detect_letters(capture)
+        for char in detected:
+            print(char)
+        matches = match_words(all_words, detected)
+        matches = sorted(matches)  # alphabetic sort
+        matches.sort(key=lambda k: len(k))  # sort shortest to longest
+        for matched_word in matches:
+            print(matched_word)
+            moves = build_moves(matched_word, detected)
+            for index, (x, y) in enumerate(moves):
+                y += y_offset
+                x, y = x // scale, y // scale
+                print("\t", "move", index, (x, y))
+                if index == 0:
+                    pyautogui.mouseDown(x, y, "left")
+                elif index == len(moves) - 1:
+                    pyautogui.mouseUp(x, y, "left")
+                else:
+                    pyautogui.moveTo(x, y, 0.15)
+            time.sleep(0.5)
+        time.sleep(12)
