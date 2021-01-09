@@ -11,6 +11,7 @@ import pyautogui
 import pytesseract
 from PIL import Image
 
+
 my_linux_config = {
     "scale": 1,
     "window_max_size": 768,
@@ -39,18 +40,23 @@ my_macos_config = {
     "rearranged_padding": 8 * 2,
 }
 
-config = my_macos_config
+config = my_linux_config
 
 
 def detect_letters(img: Image) -> [tuple]:
     img = cv.cvtColor(np.array(img), cv.COLOR_RGB2GRAY)
-    img = cv.threshold(img, 127, 255, cv.THRESH_BINARY)[1]
+    img = cv.threshold(img, 127, 255, cv.THRESH_OTSU)[1]
     mask = np.zeros(img.shape, np.uint8)
     cv.circle(mask, config["circle_center"], config["circle_radius"], 1, -1)
     img = cv.bitwise_and(img, img, mask=mask)
-    img = cv.bitwise_not(img, img, mask=mask)
-    contours, _ = cv.findContours(img, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
 
+    # check if circle center is mostly dark or white, invert img if needed
+    (px, py), size = config["circle_center"], config["rearranged_padding"]
+    sample = img[py - size:py + size, px - size:px + size]
+    if np.count_nonzero(sample) > sample.size // 2:
+        img = cv.bitwise_not(img, img, mask=mask)
+
+    contours, _ = cv.findContours(img, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
     box_size, padding = config["rearranged_box_size"], config["rearranged_padding"]
     rearranged = np.zeros((box_size, 8 * box_size), np.uint8)  # enough space for eight letters
     max_y, pos_y, pos_x = 0, padding, padding
