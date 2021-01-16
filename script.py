@@ -18,6 +18,7 @@ my_linux_config = {
     "window_height": 768,
     "screenshot_region": (0, 0, 353, 768),
     "circle_center": (176, 640),
+    "shuffle_button": (32, 520),
     "circle_radius": 110,
     "contour_min_height": 20,
     "contour_min_width": 2,
@@ -33,6 +34,7 @@ my_macos_config = {
     "window_height": 768,
     "screenshot_region": (0, 0, 353 * 2, 768 * 2 + 90),
     "circle_center": (176 * 2, 640 * 2 + 90),
+    "shuffle_button": (32 * 2, 520 * 2),
     "circle_radius": 110 * 2,
     "contour_min_height": 20 * 2,
     "contour_min_width": 2 * 2,
@@ -78,8 +80,9 @@ def detect_letters(img: Image) -> [tuple]:
     rearranged = cv.bitwise_not(rearranged, rearranged)[:max_y + padding, :pos_x]
     tes = pytesseract.image_to_string(rearranged, config='--psm 6')
     letters = list(filter(lambda c: c.isupper(), list(tes)))
+#    print(tes, letters) ; cv.imshow("rearranged", rearranged); cv.waitKey(); sys.exit()
     if len(letters) != len(positions):
-        sys.exit("error detecting letters")
+        return 0
     return list(zip(letters, positions))
 
 
@@ -127,19 +130,32 @@ def build_moves(word: str, positions: [tuple]) -> [tuple]:
     return res
 
 
+def click(pos: tuple):
+    scale = config["scale"]
+    cx, cy = pos
+    cx, cy = cx // scale, cy // scale
+    pyautogui.click(cx, cy)
+
+
 if __name__ == "__main__":
     scrcpy()
     all_words = load_words()
+    scale = config["scale"]
+
     while True:
-        x, y = config["circle_center"]
-        scale = config["scale"]
-        x, y = x // scale, y // scale
-        pyautogui.click(x, y)
+        click(config["circle_center"])
         time.sleep(2)
+
         capture = pyautogui.screenshot(region=config["screenshot_region"]).convert("RGB")
         detected = detect_letters(capture)
+
+        if detected == 0:
+            click(config["shuffle_button"])
+            continue
+
         for char in detected:
             print(char)
+
         matches = match_words(all_words, detected)
         matches = sorted(matches)  # alphabetic sort
         matches.sort(key=lambda k: len(k))  # sort shortest to longest
