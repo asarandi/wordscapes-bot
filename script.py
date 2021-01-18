@@ -41,8 +41,8 @@ def scale_i(i: int) -> int:
 
 def circle_contour() -> np.ndarray:
     r = scale_i(11)
-    img = np.zeros((r*4, r*4, 1), np.uint8)
-    img = cv.circle(img, (r*2,r*2), r, 255, -1)
+    img = np.zeros((r * 4, r * 4, 1), np.uint8)
+    img = cv.circle(img, (r * 2, r * 2), r, 255, -1)
     contours, _ = cv.findContours(img, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
     return contours[0]
 
@@ -55,17 +55,17 @@ def largest_contour(image: np.ndarray) -> np.ndarray:
     _, _, rw, rh = cv.boundingRect(res)
     for cnt in contours:
         _, _, w, h = cv.boundingRect(cnt)
-        if w*h > rw*rh:
-            res = cnt
+        if w * h > rw * rh:
+            res, rw, rh = cnt, w, h
     return res
 
 
 # does bottom left corner have the "forbid 3" circle
 def is_forbid_three(img: Image, compare: np.ndarray) -> bool:
     img = cv.cvtColor(np.array(img), cv.COLOR_RGB2GRAY)
-    binary = cv.threshold(img, 127, 255, cv.THRESH_OTSU)[1]
+    otsu = cv.threshold(img, 127, 255, cv.THRESH_OTSU)[1]
     x0, x1, y0, y1 = scale_t(config["forbid_three_circle"])
-    sub_image = binary[y0 : y1, x0 : x1]
+    sub_image = otsu[y0:y1, x0:x1]
     largest = largest_contour(sub_image)
     if largest is None:
         return False
@@ -81,7 +81,7 @@ def detect_letters(img: Image) -> (bool, []):
     cv.circle(mask, center, radius, 1, -1)
     otsu = cv.bitwise_and(otsu, otsu, mask=mask)
     (px, py), size = center, scale_i(8)
-    sample = otsu[py - size:py + size, px - size:px + size]
+    sample = otsu[py - size : py + size, px - size : px + size]
     if np.count_nonzero(sample) > sample.size // 2:
         otsu = cv.bitwise_not(otsu, otsu, mask=mask)
     all_contours, _ = cv.findContours(otsu, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
@@ -91,13 +91,15 @@ def detect_letters(img: Image) -> (bool, []):
         _, _, w, h = cv.boundingRect(cnt)
         if (min_h <= h <= max_h) and (min_w <= w <= max_w):
             contours.append(cnt)
-    if len(contours) not in (6, 7):    # expecting puzzle to have 6 or 7 letters
+    if len(contours) not in (6, 7):  # expecting puzzle to have 6 or 7 letters
         return False, []
 
     box_size = scale_i(config["rearranged_box_size"])
     padding = scale_i(config["rearranged_padding"])
-    rearranged = np.zeros((box_size, 8 * box_size), np.uint8)  # enough space for eight letters
-    max_y, pos_y, pos_x = 0, padding, padding
+
+    # enough space for eight letters
+    rearranged = np.zeros((box_size, 8 * box_size), np.uint8)
+    max_y, py, px = 0, padding, padding
 
     positions = []
     for cnt in contours:
@@ -105,12 +107,12 @@ def detect_letters(img: Image) -> (bool, []):
         positions.append((cx + (w // 2), cy + (h // 4)))
 
         # re-arrange letters in a circle into a straight line
-        rearranged[pos_y:pos_y + h, pos_x:pos_x + w] = otsu[cy:cy + h, cx:cx + w]
-        if pos_y + h > max_y:
-            max_y = pos_y + h
-        pos_x = pos_x + w + padding
+        rearranged[py : py + h, px : px + w] = otsu[cy : cy + h, cx : cx + w]
+        if py + h > max_y:
+            max_y = py + h
+        px = px + w + padding
 
-    rearranged = cv.bitwise_not(rearranged, rearranged)[:max_y + padding, :pos_x]
+    rearranged = cv.bitwise_not(rearranged, rearranged)[: max_y + padding, :px]
     tes = pytesseract.image_to_string(rearranged, config="--psm 13")
     letters = list(filter(lambda c: c.isupper(), list(tes)))
     if len(letters) != len(positions):
@@ -187,7 +189,7 @@ if __name__ == "__main__":
             click(config["close_piggybank"])
             continue
 
-        letters = ''.join([k[0] for k in detected])
+        letters = "".join([k[0] for k in detected])
         print(f"letters {letters} previous {prev_letters}")
         if letters == prev_letters:
             click(config["shuffle_button"])
@@ -200,8 +202,8 @@ if __name__ == "__main__":
         matches = match_words(all_words, detected)
         if is_forbid_three(capture, circle):
             matches = list(filter(lambda w: len(w) > 3, matches))
-        matches = sorted(matches)               # alphabetic sort
-        matches.sort(key=lambda k: len(k))      # sort shortest to longest
+        matches = sorted(matches)  # alphabetic sort
+        matches.sort(key=lambda k: len(k))  # sort shortest to longest
         for matched_word in matches:
             print(matched_word)
             moves = build_moves(matched_word, detected)
