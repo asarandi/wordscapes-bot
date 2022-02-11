@@ -2,3 +2,4 @@
 *.sw*
 .DS_Store
 ._*
+extras/
